@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>proj 1</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        p {
+            max-width: 800px;
+            margin: 20px auto 20px auto;
+            text-align: justify;
+        }
+        .row {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
+            max-width: 1000px;
+            margin: 20px auto;
+        }
+        .grid figure img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        figure {
+            margin: 0;
+        }
+        figcaption {
+            margin-top: 6px;
+        }
+        .tag {
+            color: #777;
+            font-size: 0.85em;
+        }
+        img {
+            border: 1px solid #999;
+        }
+        .formula-box {
+            max-width: 500px;
+            margin: 24px auto;
+            padding: 16px 24px;
+            background: #f6f6f6;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+        .formula-box p {
+            text-align: center;
+            margin: 10px auto;
+        }
+        table {
+            margin: 20px auto;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #acacac;
+            padding: 6px 14px;
+        }
+        hr {
+            width: 100%;
+            margin: 30px auto;
+            border: none;
+            border-top: 2px solid #acacac;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+    <h1>CS180 Project #1: Images of the Russian Empire</h1>
+    <hr>
+
+    <h2>Overview</h2>
+    <p>
+        Around 1907, Sergei Prokudin-Gorskii photographed the Russian Empire in color, decades before color film existed. 
+        His trick: take three exposures of the same scene in quick succession, each through a different colored filter (blue, green, red), 
+        and record all three as grayscale strips on a single glass plate.
+        Stack the three strips back together and you get a color photo.
+    </p>
+ 
+    <figure>
+        <img src="images/cathedral.jpg" width="200">
+        <figcaption>Raw scan of cathedral.jpg</figcaption>
+    </figure>
+ 
+    <p>
+        This is what that actually looks like before any processing: one tall image, split into three roughly equal bands from top to bottom. 
+        In this project, the top band is treated as blue, the middle as green, and the bottom as red (matching the filter order the plates were shot in).
+    </p>
+ 
+    <p>
+        The catch is that the camera or the scene could shift slightly between exposures, 
+        so the three bands rarely line up when stacked directly, producing colored ghosting instead of a sharp image. 
+        This project's job is to automatically find, for each photo, how far to shift the green and red bands so they land back on top of the blue one.
+    </p>
+    
+    <p>
+        The approach: try a window of candidate (dy, dx) shifts, score how well each one lines the shifted channel up against the reference (blue) channel, 
+        and keep the best-scoring shift. Two scoring functions were used, L2 (Euclidean) distance and Normalized Cross-Correlation (NCC):
+    </p>
+
+    <div class="formula-box">
+        <p>L2 distance: \( \sqrt{\sum (I_1 - I_2)^2} \)</p>
+        <p>NCC: \( \dfrac{(I_1 - \bar{I_1}) \cdot (I_2 - \bar{I_2})}{\|I_1 - \bar{I_1}\| \, \|I_2 - \bar{I_2}\|} \)</p>
+    </div>
+
+    <p>
+        L2 is a distance between pixel values, zero when the two channels match exactly, so a lower L2 means a better alignment. 
+        NCC is a similarity score bounded by 1 (perfect positive correlation), so a higher NCC means a better alignment.
+    </p>
+
+    <p>
+        Each candidate shift is applied with a circular roll (<code>np.roll</code>): pixels shifted off one edge
+        wrap around to the opposite edge rather than being padded with zeros. This is why scoring is restricted
+        to a cropped interior region (see Part 1 below): without cropping, wrapped-around pixels from the far
+        edge of the image would count toward the match score and pull the search toward a wrong shift.
+    </p>
+    <hr>
+
+    <h2>Part 1: Single-Scale Alignment</h2>
+    <p>
+        On the small .jpg scans (cathedral, monastery, tobolsk), exhaustive search over a [-15, 15] pixel window is cheap enough to run directly, no extra tricks needed.
+    </p>
+
+    <h3>First attempt: scoring the whole image</h3>
+    <p>
+        Scoring directly on the raw channel splits, cathedral.jpg looked reasonably aligned, but monastery.jpg showed clear ghosting around the domes and bridge railings. 
+        Both L2 and NCC converged on the same offset for monastery, which suggested the problem was not metric choice but something pulling both metrics
+        toward the same bad match, likely the high-contrast glass plate border rather than the actual scene content.
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/cathedral_notWellAligned.jpg" width="200">
+        <figcaption>cathedral.jpg, no cropping</figcaption>
+    </figure>
+    <figure>
+        <img src="images/monastery_notWellAligned.jpg" width="200">
+        <figcaption>monastery.jpg, no cropping</figcaption>
+    </figure>
+    <figure>
+        <img src="images/tobolsk_notWellAligned.jpg" width="200">
+        <figcaption>tobolsk.jpg, no cropping</figcaption>
+    </figure>
+    </div>
+
+    <table>
+        <tr><th>Image</th><th>Metric</th><th>Green offset (dy, dx)</th><th>Red offset (dy, dx)</th></tr>
+        <tr><td>cathedral.jpg</td><td>L2 / NCC</td><td>(1, -1)</td><td>(7, -1)</td></tr>
+        <tr><td>monastery.jpg</td><td>L2 / NCC</td><td>(-6, 0)</td><td>(9, 1)</td></tr>
+        <tr><td>tobolsk.jpg</td><td>L2 / NCC</td><td>(3, 2)</td><td>(6, 3)</td></tr>
+    </table>
+
+    <h3>The fix: crop the border before scoring</h3>
+    <p>
+        Cropping a margin off each channel before scoring (while still shifting and outputting the full image) fixed the monastery misalignment entirely, 
+        with no more visible ghosting. 
+        It also changed the offsets for cathedral.jpg, even though that result already looked fine by eye, which suggests the border was
+        quietly biasing the "good" result too, not just causing the visible failure on monastery.
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/cathedral_aligned.jpg" width="200">
+        <figcaption>cathedral.jpg, with cropping</figcaption>
+    </figure>
+    <figure>
+        <img src="images/monastery_aligned.jpg" width="200">
+        <figcaption>monastery.jpg, with cropping</figcaption>
+    </figure>
+    <figure>
+        <img src="images/tobolsk_aligned.jpg" width="200">
+        <figcaption>tobolsk.jpg, with cropping</figcaption>
+    </figure>
+    </div>
+
+    <table>
+        <tr><th>Image</th><th>Metric</th><th>Green offset (dy, dx)</th><th>Red offset (dy, dx)</th></tr>
+        <tr><td>cathedral.jpg</td><td>L2 / NCC</td><td>(5, 2)</td><td>(12, 3)</td></tr>
+        <tr><td>monastery.jpg</td><td>L2 / NCC</td><td>(-3, 2)</td><td>(3, 2)</td></tr>
+        <tr><td>tobolsk.jpg</td><td>L2 / NCC</td><td>(3, 3)</td><td>(6, 3)</td></tr>
+    </table>
+    <hr>
+
+    <h2>Part 2: Image Pyramid</h2>
+    <p>
+        The full-size .tif scans are far too large for exhaustive search at [-15, 15]: a real misalignment on these images can be on the order of 50 to 150 pixels, 
+        and searching that wide a window at full resolution would be extremely slow. Instead, a coarse-to-fine image pyramid is used:
+    </p>
+    <ol style="max-width: 800px; margin: 20px auto; text-align: left;">
+        <li>Downsample both the moving channel and the reference channel by half, repeatedly, until the image is 
+            small enough (under ~100px on the long side) that exhaustive search is cheap.</li>
+        <li>Run exhaustive search at that coarsest level to get an initial displacement estimate.</li>
+        <li>Move up one level: double the previous displacement (since a 1px shift at half resolution is a 2px
+            shift at full resolution), apply it, then refine with a small local search (±2px) around that guess.</li>
+        <li>Repeat step 3 up through every level until back at full resolution.</li>
+    </ol>
+    <p>
+        This keeps exhaustive search confined to the coarsest, cheapest level, while every finer level only needs a tiny local search, 
+        since the previous level's estimate should already be close. 
+        The 100px cutoff keeps the coarsest exhaustive search small (under a few thousand pixel comparisons even at a ±15 window), 
+        and a &plusmn;2px refine window is enough at every finer level since each level starts from an estimate that should already be within a pixel or two of correct.
+    </p>
+
+    <h3>A second problem shows up: L2 starts disagreeing with NCC</h3>
+    <p>
+        On the .tif images, L2 and NCC no longer always agree, and NCC is used as the primary metric going forward. 
+        L2 compares raw pixel intensities directly, so it implicitly assumes the three channels have similar brightness and contrast. 
+        NCC first subtracts the mean and normalizes by norm, so it is invariant to per-channel brightness and contrast differences. Since the R, G, and B exposures on these glass plates
+        were taken through different filters, and often have visibly different brightness, NCC is the more appropriate metric for the full-size images.
+    </p>
+    <p>
+        church.tif shows this directly: L2 diverged to a clearly wrong displacement, while NCC produced a much better alignment on the same image and pyramid code.
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/church_l2.jpg" width="300" alt="church.tif misaligned using L2 metric, showing severe ghosting">
+        <figcaption>church.tif, L2 (diverged)</figcaption>
+    </figure>
+    <figure>
+        <img src="images/church_ncc.jpg" width="300" alt="church.tif cleanly aligned using NCC metric">
+        <figcaption>church.tif, NCC</figcaption>
+    </figure>
+    </div>
+
+    <table>
+        <tr><th>Image</th><th>Metric</th><th>Green offset (dy, dx)</th><th>Red offset (dy, dx)</th></tr>
+        <tr><td>church.tif</td><td>L2</td><td>(49, 435)</td><td>(77, 427)</td></tr>
+        <tr><td>church.tif</td><td>NCC</td><td>(25, 4)</td><td>(58, -4)</td></tr>
+    </table>
+    <hr>
+
+    <h2>Part 3: Full Results</h2>
+    <p>
+        Pyramid alignment (NCC) results for all 17 images: the 14 provided plus 3 selected from the Library of Congress collection (marked "self-selected" below). 
+        emir.tif is shown here using its final edge-based alignment. See the failure case and Bells &amp; Whistles sections below for why.
+    </p>
+
+    <div class="grid">
+    <figure><img src="images/cathedral_aligned.jpg" alt="cathedral.jpg aligned result"><figcaption>cathedral.jpg</figcaption></figure>
+    <figure><img src="images/monastery_aligned.jpg" alt="monastery.jpg aligned result"><figcaption>monastery.jpg</figcaption></figure>
+    <figure><img src="images/tobolsk_aligned.jpg" alt="tobolsk.jpg aligned result"><figcaption>tobolsk.jpg</figcaption></figure>
+    <figure><img src="images/church_ncc.jpg" alt="church.tif aligned result"><figcaption>church.tif</figcaption></figure>
+    <figure><img src="images/emir_ncc_edges.jpg" alt="emir.tif aligned result using edge-based alignment"><figcaption>emir.tif (edge-based)</figcaption></figure>
+    <figure><img src="images/harvesters_ncc.jpg" alt="harvesters.tif aligned result"><figcaption>harvesters.tif</figcaption></figure>
+    <figure><img src="images/icon_ncc.jpg" alt="icon.tif aligned result"><figcaption>icon.tif</figcaption></figure>
+    <figure><img src="images/ilemselga_ncc.jpg" alt="ilemselga.tif aligned result"><figcaption>ilemselga.tif</figcaption></figure>
+    <figure><img src="images/melons_ncc.jpg" alt="melons.tif aligned result"><figcaption>melons.tif</figcaption></figure>
+    <figure><img src="images/religous_painting_ncc.jpg" alt="religious_painting.tif aligned result"><figcaption>religious_painting.tif</figcaption></figure>
+    <figure><img src="images/self_portrait_ncc.jpg" alt="self_portrait.tif aligned result"><figcaption>self_portrait.tif</figcaption></figure>
+    <figure><img src="images/siren_ncc.jpg" alt="siren.tif aligned result"><figcaption>siren.tif</figcaption></figure>
+    <figure><img src="images/three_generations_ncc.jpg" alt="three_generations.tif aligned result"><figcaption>three_generations.tif</figcaption></figure>
+    <figure><img src="images/wharf_ncc.jpg" alt="wharf.tif aligned result"><figcaption>wharf.tif</figcaption></figure>
+    <figure><img src="images/master-pnp-prok-00000-00010a_ncc.jpg" alt="self-selected image: camel, aligned result"><figcaption>master-pnp-prok-00000-00010a<br><span class="tag">(self-selected)</span></figcaption></figure>
+    <figure><img src="images/master-pnp-prok-00500-00588a_ncc.jpg" alt="self-selected image: dogs by cabin, aligned result"><figcaption>master-pnp-prok-00500-00588a<br><span class="tag">(self-selected)</span></figcaption></figure>
+    <figure><img src="images/master-pnp-prok-00300-00335a_ncc.jpg" alt="self-selected image: sleeping dog, aligned result"><figcaption>master-pnp-prok-00300-00335a<br><span class="tag">(self-selected)</span></figcaption></figure>
+    </div>
+
+    <table>
+        <tr><th>Image</th><th>Green offset (dy, dx)</th><th>Red offset (dy, dx)</th></tr>
+        <tr><td>cathedral.jpg</td><td>(5, 2)</td><td>(12, 3)</td></tr>
+        <tr><td>monastery.jpg</td><td>(-3, 2)</td><td>(3, 2)</td></tr>
+        <tr><td>tobolsk.jpg</td><td>(3, 3)</td><td>(6, 3)</td></tr>
+        <tr><td>church.tif</td><td>(25, 4)</td><td>(58, -4)</td></tr>
+        <tr><td>emir.tif (edge-based)</td><td>(49, 24)</td><td>(107, 40)</td></tr>
+        <tr><td>harvesters.tif</td><td>(60, 17)</td><td>(124, 13)</td></tr>
+        <tr><td>icon.tif</td><td>(41, 17)</td><td>(89, 23)</td></tr>
+        <tr><td>ilemselga.tif</td><td>(40, 7)</td><td>(130, 11)</td></tr>
+        <tr><td>melons.tif</td><td>(82, 11)</td><td>(178, 13)</td></tr>
+        <tr><td>religious_painting.tif</td><td>(28, 3)</td><td>(68, 7)</td></tr>
+        <tr><td>self_portrait.tif</td><td>(79, 29)</td><td>(176, 37)</td></tr>
+        <tr><td>siren.tif</td><td>(49, -6)</td><td>(96, -25)</td></tr>
+        <tr><td>three_generations.tif</td><td>(53, 14)</td><td>(112, 11)</td></tr>
+        <tr><td>wharf.tif</td><td>(15, -7)</td><td>(83, -16)</td></tr>
+        <tr><td>master-pnp-prok-00000-00010a <span class="tag">(self-selected)</span></td><td>(46, -3)</td><td>(98, -20)</td></tr>
+        <tr><td>master-pnp-prok-00500-00588a <span class="tag">(self-selected)</span></td><td>(50, 1)</td><td>(110, 0)</td></tr>
+        <tr><td>master-pnp-prok-00300-00335a <span class="tag">(self-selected)</span></td><td>(13, -1)</td><td>(81, -2)</td></tr>
+    </table>
+
+    <p>
+        The sleeping dog image (master-pnp-prok-00300-00335a) reproduces the same L2-fails / NCC-recovers pattern seen earlier with church.tif:
+        L2 diverged to (84, -175) for the red channel, producing visible red/cyan ghosting on the dog and the boat in the background, 
+        while NCC found (81, -2) and aligned cleanly. This is a second, independent case supporting NCC as the better default metric for these full-size scans, 
+        not something specific to church.tif.
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/master-pnp-prok-00300-00335a_l2.jpg" width="300" alt="sleeping dog image misaligned using L2 metric">
+        <figcaption>master-pnp-prok-00300-00335a, L2 (diverged)</figcaption>
+    </figure>
+    <figure>
+        <img src="images/master-pnp-prok-00300-00335a_ncc.jpg" width="300" alt="sleeping dog image cleanly aligned using NCC metric">
+        <figcaption>master-pnp-prok-00300-00335a, NCC</figcaption>
+    </figure>
+    </div>
+
+    <h3>Where it still breaks: emir.tif</h3>
+    <p>
+        emir.tif (the Emir of Bukhara) fails to align under both L2 and NCC, producing visible double-exposure ghosting. 
+        Unlike church.tif, this is not fixed by switching metrics, since the R, G, and B exposures of this particular plate do not just differ in overall brightness, 
+        they differ enough that raw pixel content does not correspond well between channels at all. 
+        This matches the assignment's own note that this image is a known hard case requiring a cleverer metric or a feature-based approach rather than raw pixel comparison, 
+        But emir.tif could be aligned cleanly by scoring on Sobel edge maps instead of raw pixel values, see below Bells &amp; Whistles.
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/emir_ncc.jpg" width="300" alt="emir.tif misaligned using raw-pixel NCC, showing double exposure">
+        <figcaption>emir.tif, NCC</figcaption>
+    </figure>
+    <figure>
+        <img src="images/emir_l2.jpg" width="300" alt="emir.tif misaligned using raw-pixel L2, showing double exposure">
+        <figcaption>emir.tif, L2</figcaption>
+    </figure>
+    </div>
+    <hr>
+
+    <h2>Bells &amp; Whistles: Aligning on Edges Instead of Pixels</h2>
+    <p>
+        Since emir.tif's R, G, and B channels differ enough in brightness that raw pixel comparison fails even under NCC, 
+        the alignment search is instead scored on Sobel edge magnitude maps of each channel rather than on raw pixel values. 
+        Edges (garment outlines, door frames, figure silhouettes) tend to line up across channels even when overall brightness and contrast do not. 
+        The edge maps are used only to find the best displacement. 
+        That displacement is then applied to the original channel so the final output still has real color values, not edge magnitudes.
+    </p>
+    <p>
+        This fixed the double-exposure ghosting entirely. The offsets also became far more plausible: 
+        the red channel offset went from (414, -787), clearly divergent, to (107, 40), which is in the same range as the green channel offset of (49, 24).
+    </p>
+
+    <div class="row">
+    <figure>
+        <img src="images/emir_ncc.jpg" width="300" alt="emir.tif before fix, using raw pixel NCC, showing double exposure">
+        <figcaption>emir.tif, before (raw pixel NCC)</figcaption>
+    </figure>
+    <figure>
+        <img src="images/emir_ncc_edges.jpg" width="300" alt="emir.tif after fix, using edge-based NCC, cleanly aligned">
+        <figcaption>emir.tif, after (edge-based NCC)</figcaption>
+    </figure>
+    </div>
+
+    <table>
+        <tr><th>Image</th><th>Metric</th><th>Green offset (dy, dx)</th><th>Red offset (dy, dx)</th></tr>
+        <tr><td>emir.tif</td><td>NCC (raw pixels)</td><td>(49, 24)</td><td>(414, -787)</td></tr>
+        <tr><td>emir.tif</td><td>NCC (Sobel edges)</td><td>(49, 24)</td><td>(107, 40)</td></tr>
+    </table>
+    <hr>
+
+    <a href="../index.html">Back</a>
+</body>
+</html>
