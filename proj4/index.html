@@ -138,14 +138,26 @@
 
     <h2>A.2: Recover Homographies</h2>
     <p>
-        <code>computeH(im1_pts, im2_pts)</code> recovers the homography \(H\) satisfying \(p' = Hp\) from \(n \geq 4\)
-        point correspondences. Each correspondence gives two linear equations, and with 8-10 points per pair the
-        resulting system is overdetermined and solved with least squares:
+        <code>computeH(im1_pts, im2_pts)</code> recovers the homography \(H\) from
+        \(n \geq 4\) corresponding point pairs. The homography maps points in
+        homogeneous coordinates, satisfying \(p' \sim Hp\), where the transformed
+        coordinates are divided by their third component to obtain pixel coordinates.
+        Each correspondence provides two linear equations. For the three mosaic pairs,
+        eight correspondences were selected per pair, producing an overdetermined
+        system that is solved using least squares with \(h_{33} = 1\):
     </p>
 
     <div class="formula-box">
-    <p>\( A h = b, \qquad h = \arg\min_h \|Ah - b\|^2 \)</p>
-    <p>Row pair for point \(i\): \( [x,\,y,\,1,\,0,\,0,\,0,\,-xx',\,-yx'] \), \( [0,\,0,\,0,\,x,\,y,\,1,\,-xy',\,-yy'] \)</p>
+        <p>
+            \( Ah = b, \qquad
+            h = \arg\min_h \|Ah - b\|^2 \)
+        </p>
+        <p>
+            Row pair for point \(i\):
+            \( [x,\,y,\,1,\,0,\,0,\,0,\,-xx',\,-yx'] \)
+            <br>
+            \( [0,\,0,\,0,\,x,\,y,\,1,\,-xy',\,-yy'] \)
+        </p>
     </div>
 
     <p>
@@ -172,8 +184,15 @@
         Correspondences were hand-picked on sharp, stable features (rock edges, cliff lines, building corners) and
         avoided moving or low-contrast regions such as waves and glare. For the three mosaic pairs,
         correspondences were picked using <a href="https://cal-cs180.github.io/fa23/hw/proj3/tool.html" target="_blank">this point-picking tool</a>,
-        which exports matched 8 clicked coordinates as JSON for use with <code>computeH</code>. 
+        which exports eight corresponding point pairs per image pair as JSON for use with <code>computeH</code>. 
         Each pair below is shown with points numbered to match between the two images, so correspondence can be checked at a glance.
+    </p>
+
+    <p>
+        Reprojection error was calculated as the Euclidean distance in pixels
+        between each observed destination point and its corresponding
+        source point transformed by the estimated homography.
+        The mean and maximum errors are reported for each image pair.
     </p>
 
     <table>
@@ -238,8 +257,8 @@
     <p>
         Nearest-neighbor is faster, since it does one direct lookup per pixel rather than a weighted average of
         four neighboring pixels, but it produces visibly blockier, stair-stepped edges (see the rectification zooms
-        below). 
-        Bilinear interpolation costs roughly 2 to 2.5x the runtime across all three warps in this project, but
+        below).
+        Bilinear interpolation takes roughly 3x the runtime across the three warps in this project, but
         it produces a noticeably smoother result. That extra cost is worth it here, since any blocky artifacts would
         otherwise be baked permanently into the final blended mosaic.
     </p>
@@ -247,21 +266,22 @@
     <h3>Rectification</h3>
     <p>
         To verify <code>computeH</code> and <code>warpImageBilinear</code> independently of the mosaicing pipeline,
-        two separate photos containing known rectangular objects were rectified. In each case, the four corners of
-        the object were clicked and mapped to an actual rectangle; warping the whole image with the resulting \(H\)
-        makes that object's frame perfectly rectangular. For each example, a small region at the center of the
-        rectangle was also cropped and zoomed in 6x to directly compare nearest-neighbor and bilinear interpolation
-        on the same pixels.
+        two separate photos containing known rectangular objects were rectified. 
+        In each case, the four corners of the object were clicked and mapped to a rectangular target. 
+        Warping the image with the resulting \(H\) maps the selected object corners to the specified rectangle. 
+        For each example, a small region at the center of the rectangle was also cropped and zoomed in 6x to directly compare nearest-neighbor and bilinear
+        interpolation on the same pixels.
     </p>
 
     <h4>Example 1: Starbucks board</h4>
     <figure>
     <img alt="rectification of a Starbucks menu board: original, full nearest-neighbor warp, full bilinear warp" src="output/board_rectification.png" width="900"/>
     <figcaption>
-        Left: original with clicked corners. Middle: full rectified warp using nearest-neighbor interpolation.
-        Right: full rectified warp using bilinear interpolation. The board's frame is now axis-aligned and the
-        background wallpaper stripes are straight, confirming the warp is correct. The black wedge on the right
-        edge is canvas outside the original photo's content, pulled in by the correction.
+        Left: original image with selected corners. 
+        Middle: full rectified warp using nearest-neighbor interpolation. 
+        Right: full rectified warp using bilinear interpolation. 
+        The selected board corners are mapped to an axis-aligned rectangle, demonstrating successful rectification of the target planar surface. 
+        The black region on the right corresponds to areas outside the original image after warping.
     </figcaption>
     </figure>
 
@@ -273,14 +293,14 @@
     </figcaption>
     </figure>
 
-    <h4>Example 2: Lecture slide (ground-plane style rectification)</h4>
+    <h4>Example 2: Lecture slide</h4>
     <figure>
     <img alt="rectification of a projected lecture slide: original, full nearest-neighbor warp, full bilinear warp" src="output/slide_rectification.png" width="900"/>
     <figcaption>
-        Left: original with clicked corners, shot at an angle to the projector screen. Middle: full rectified warp
-        using nearest-neighbor interpolation. 
-        Right: full rectified warp using bilinear interpolation. Lines of text are now horizontal and evenly spaced, 
-        and the screen's bezel is axis-aligned, matching the slide content's own correction.
+        Left: original with clicked corners, shot at an angle to the projector screen. 
+        Middle: full rectified warp using nearest-neighbor interpolation. 
+        Right: full rectified warp using bilinear interpolation. 
+        Lines of text are now horizontal and evenly spaced, and the screen's bezel is axis-aligned, matching the slide content's own correction.
     </figcaption>
     </figure>
 
@@ -329,14 +349,15 @@
     <img alt="feather vs Laplacian blend comparison, waterfall" src="output/set1_waterfall_blending_comparison.png" width="900"/>
     <figcaption>Feather (left) vs. Laplacian (right) blending. Canvas size 1330 x 1613.</figcaption>
     </figure>
-    
+
     <p>
-        This was the most demanding scene: shot at close range with large depth variation between the foreground
-        rocks and the cliff face, which slightly violates the fixed-center-of-projection assumption even with
-        careful camera handling. A first attempt with looser correspondences showed a visible seam and a kink in
-        the waterfall stream. After re-picking correspondences on sharper, more stable rock features, mean error
-        dropped from 1.75px to 0.83px and the seam became much less visible, though a very faint misalignment
-        remains near the join, consistent with residual parallax rather than correspondence noise.
+        This was the most challenging scene due to the depth variation between the foreground rocks and the distant cliff face, 
+        making it more susceptible to parallax if the camera moved between shots. 
+        The initial correspondences produced a mean reprojection error of 1.75 pixels and a noticeable seam. 
+        After refining the correspondences using more distinctive rock features, 
+        the error decreased to 0.83 pixels, improving the alignment. 
+        Both feather and Laplacian pyramid blending produced visually convincing panoramas with no obvious severe ghosting, 
+        although minor alignment differences may remain in the overlapping region.
     </p>
 
     <h3>Mosaic 2: Mountain Valley</h3>
@@ -357,11 +378,11 @@
     </figure>
 
     <p>
-        Shot at a distance with minimal depth variation, so geometric alignment is excellent. Rock edges and the
-        treeline match cleanly across the seam. A faint vertical seam remains visible in the smooth sky region due
-        to a small exposure or color difference between the two shots. Laplacian blending visibly softens this
-        seam more than feathering alone, since it blends low-frequency color differences over a wider spatial
-        extent rather than a single sharp transition.
+        The mountain valley scene contains mostly distant features, making it suitable for homography-based alignment. 
+        Although it had the highest mean reprojection error of the three pairs (1.32 pixels), the resulting
+        panorama shows generally good alignment of the rock edges and treeline.
+        A faint seam remains visible in the smooth sky region, possibly due to slight exposure or color differences between the images. 
+        Laplacian pyramid blending helps soften this transition by blending low-frequency differences over a wider spatial region.
     </p>
 
     <h3>Mosaic 3: Lighthouse</h3>
@@ -382,9 +403,10 @@
     </figure>
 
     <p>
-        The cleanest result of the three: sharp, high-contrast landmarks (the lighthouse tower, fences, buildings)
-        gave very precise correspondences (0.82px mean error), and the distant, static scene has essentially no
-        parallax. The lighthouse, cliff edge, and horizon align seamlessly with no visible ghosting.
+        The lighthouse produced the lowest mean reprojection error of the three pairs (0.82 pixels). 
+        Sharp, high-contrast landmarks such as the lighthouse tower, fences, and buildings made it easier to select precise correspondences. 
+        The relatively distant scene also reduces the likelihood of significant parallax. 
+        The result shows good alignment of the lighthouse, cliff edge, and horizon, with no obvious ghosting.
     </p>
     <hr/>
 
