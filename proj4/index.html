@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>proj 4</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        p {
+            max-width: 800px;
+            margin: 20px auto 20px auto;
+            text-align: justify;
+        }
+        .row {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 16px;
+        }
+        figure {
+            margin: 0 0 16px 0;
+        }
+        figcaption {
+            margin-top: 6px;
+        }
+        img {
+            border: 1px solid #999;
+            max-width: 100%;
+            height: auto;
+        }
+        .formula-box {
+            max-width: 500px;
+            margin: 24px auto;
+            padding: 16px 24px;
+            background: #f6f6f6;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+        .formula-box p {
+            text-align: center;
+            margin: 10px auto;
+        }
+        table {
+            margin: 20px auto;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #acacac;
+            padding: 6px 14px;
+        }
+        hr {
+            width: 100%;
+            margin: 30px auto;
+            border: none;
+            border-top: 2px solid #acacac;
+        }
+        .row-bottom {
+            align-items: flex-end;
+        }
+
+        h1 { margin: 24px auto 10px; }
+        h2 { margin: 32px auto 14px; }
+        h3 { margin: 24px auto 10px; }
+        h4 { margin: 18px auto 8px; }
+        table { max-width: 100%; }
+        th, td { text-align: left; }
+        figure { max-width: 100%; }
+        figcaption { font-size: 0.92rem; line-height: 1.45; color: #444; }
+        .formula-box { box-sizing: border-box; max-width: 800px; }
+        .reflection { max-width: 850px; margin: 0 auto 32px; break-inside: avoid; page-break-inside: avoid; }
+        .reflection p { max-width: 800px; }
+        @media print {
+            figure, table, .formula-box { break-inside: avoid; }
+            body { margin: 14mm; }
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+    <h1>CS180 Project #4A: Image Warping and Mosaicing</h1>
+    <hr/>
+
+    <h2>Overview</h2>
+    <p>
+        This project builds an image mosaicing pipeline from scratch: recovering homographies between pairs of images,
+        warping images via inverse sampling with nearest-neighbor and bilinear interpolation, and blending warped
+        images into seamless mosaics using feathering and Laplacian pyramid blending. Three image pairs were shot
+        with a fixed center of projection, and two single-image rectification examples verify the homography and
+        warping code independently of the mosaicing pipeline.
+    </p>
+    <hr/>
+
+    <h2>A.1: Shoot the Pictures</h2>
+    <p>
+        Three image pairs were shot with the camera rotated around a fixed center of projection, each with significant overlap (roughly 40-70%): 
+        a waterfall scene (close range, high depth variation), a mountain valley overlook
+        (wide, mostly distant depth), and a lighthouse at sunset (distant, high-contrast landmarks).
+    </p>
+
+    <div class="row">
+    <figure>
+    <img alt="waterfall image 1" src="images/set1_1.jpg" width="260"/>
+    <figcaption>Waterfall, image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="waterfall image 2" src="images/set1_2.jpg" width="260"/>
+    <figcaption>Waterfall, image 2</figcaption>
+    </figure>
+    </div>
+
+    <div class="row">
+    <figure>
+    <img alt="mountain valley image 1" src="images/set2_1.jpg" width="260"/>
+    <figcaption>Mountain valley, image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="mountain valley image 2" src="images/set2_2.jpg" width="260"/>
+    <figcaption>Mountain valley, image 2</figcaption>
+    </figure>
+    </div>
+
+    <div class="row">
+    <figure>
+    <img alt="lighthouse image 1" src="images/set3_1.jpg" width="260"/>
+    <figcaption>Lighthouse, image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="lighthouse image 2" src="images/set3_2.jpg" width="260"/>
+    <figcaption>Lighthouse, image 2</figcaption>
+    </figure>
+    </div>
+    <hr/>
+
+    <h2>A.2: Recover Homographies</h2>
+    <p>
+        <code>computeH(im1_pts, im2_pts)</code> recovers the homography \(H\) satisfying \(p' = Hp\) from \(n \geq 4\)
+        point correspondences. Each correspondence gives two linear equations, and with 8-10 points per pair the
+        resulting system is overdetermined and solved with least squares:
+    </p>
+
+    <div class="formula-box">
+    <p>\( A h = b, \qquad h = \arg\min_h \|Ah - b\|^2 \)</p>
+    <p>Row pair for point \(i\): \( [x,\,y,\,1,\,0,\,0,\,0,\,-xx',\,-yx'] \), \( [0,\,0,\,0,\,x,\,y,\,1,\,-xy',\,-yy'] \)</p>
+    </div>
+
+    <p>
+        As a concrete example, the system below is the one actually solved for the Starbucks board rectification
+        (see A.3), with 4 correspondences mapped to the corners of a 400x500 rectangle, giving 8 equations in 8
+        unknowns:
+    </p>
+
+    <pre style="text-align:left; max-width:800px; margin:0 auto 24px; overflow-x:auto; background:#f6f6f6; padding:12px 16px; border:1px solid #ccc; font-size:0.82rem; line-height:1.4;">
+    A matrix (Ah = b):
+    [[ 327.49  223.79    1.      0.      0.      0.     -0.       -0.    ]
+    [   0.      0.      0.    327.49  223.79    1.     -0.       -0.    ]
+    [ 636.92  226.37    1.      0.      0.      0.  -254768.56 -90546.10]
+    [   0.      0.      0.    636.92  226.37    1.     -0.       -0.    ]
+    [ 647.24  605.42    1.      0.      0.      0.  -258894.32 -242167.80]
+    [   0.      0.      0.    647.24  605.42    1.  -323617.90 -302709.75]
+    [ 330.07  613.16    1.      0.      0.      0.     -0.       -0.    ]
+    [   0.      0.      0.    330.07  613.16    1.  -165033.98 -306577.65]]
+
+    b vector:
+    [  0.   0. 400.   0. 400. 500.   0. 500.]</pre>
+
+    <p>
+        Correspondences were hand-picked on sharp, stable features (rock edges, cliff lines, building corners) and
+        avoided moving or low-contrast regions such as waves and glare. For the three mosaic pairs,
+        correspondences were picked using <a href="https://cal-cs180.github.io/fa23/hw/proj3/tool.html" target="_blank">this point-picking tool</a>,
+        which exports matched 8 clicked coordinates as JSON for use with <code>computeH</code>. 
+        Each pair below is shown with points numbered to match between the two images, so correspondence can be checked at a glance.
+    </p>
+
+    <table>
+    <tr><th>Image pair</th><th>Correspondences</th><th>Mean error</th><th>Max error</th></tr>
+    <tr><td>Waterfall</td><td>8</td><td>0.83px</td><td>1.24px</td></tr>
+    <tr><td>Mountain valley</td><td>8</td><td>1.32px</td><td>2.90px</td></tr>
+    <tr><td>Lighthouse</td><td>8</td><td>0.82px</td><td>1.32px</td></tr>
+    </table>
+
+    <p>
+        The mountain valley pair has the highest error of the three despite using the same number of points.
+        Its correspondences sit mostly on soft, low-contrast features (cloud edges, distant ridgelines, foliage),
+        which are harder to click precisely than the sharp architectural and rock edges used in the other two
+        pairs. The waterfall and lighthouse pairs both have sub-pixel mean error, helped by sharp, high-contrast
+        landmarks (rock cracks, building corners, the lighthouse silhouette) that are easy to localize exactly.
+    </p>
+
+    <h3>Waterfall</h3>
+    <figure>
+    <img alt="correspondences on the two waterfall images with matching lines drawn" src="output/set1_1_set1_2_correspondences.png" width="900"/>
+    <figcaption>8 correspondences, mean reprojection error 0.83px, max 1.24px</figcaption>
+    </figure>
+
+    <div class="formula-box">
+    <p>\( H = \begin{bmatrix} 0.7129 & 0.0861 & 342.08 \\ -0.3242 & 0.9172 & 57.93 \\ -0.00036 & -0.00001 & 1 \end{bmatrix} \)</p>
+    </div>
+
+    <h3>Mountain valley</h3>
+    <figure>
+    <img alt="correspondences on the two mountain valley images with matching lines drawn" src="output/set2_1_set2_2_correspondences.png" width="900"/>
+    <figcaption>8 correspondences, mean reprojection error 1.32px, max 2.90px</figcaption>
+    </figure>
+
+    <div class="formula-box">
+    <p>\( H = \begin{bmatrix} 1.2347 & 0.1373 & -71.28 \\ -0.0335 & 1.4484 & -457.35 \\ -0.00006 & 0.00037 & 1 \end{bmatrix} \)</p>
+    </div>
+
+    <h3>Lighthouse</h3>
+    <figure>
+    <img alt="correspondences on the two lighthouse images with matching lines drawn" src="output/set3_1_set3_2_correspondences.png" width="900"/>
+    <figcaption>8 correspondences, mean reprojection error 0.82px, max 1.32px</figcaption>
+    </figure>
+
+    <div class="formula-box">
+    <p>\( H = \begin{bmatrix} 1.1568 & -0.1245 & -294.70 \\ 0.2392 & 0.9941 & 7.90 \\ 0.00025 & -0.00012 & 1 \end{bmatrix} \)</p>
+    </div>
+    <hr/>
+
+    <h2>A.3: Warp the Images</h2>
+    <p>
+        <code>warpImageNearestNeighbor(im, H)</code> and <code>warpImageBilinear(im, H)</code> both use inverse warping: 
+        the output canvas bounds are predicted by mapping the four source corners through \(H\), then for
+        every destination pixel the corresponding source location is found via \(H^{-1}\) and sampled, avoiding holes
+        in the output.
+    </p>
+
+    <figure>
+    <img alt="nearest neighbor vs bilinear comparison on the waterfall warp" src="output/set1_1_to_set1_2_comparison.png" width="900"/>
+    <figcaption>Nearest-neighbor vs. bilinear interpolation, waterfall warp</figcaption>
+    </figure>
+
+    <p>
+        Nearest-neighbor is faster, since it does one direct lookup per pixel rather than a weighted average of
+        four neighboring pixels, but it produces visibly blockier, stair-stepped edges (see the rectification zooms
+        below). 
+        Bilinear interpolation costs roughly 2 to 2.5x the runtime across all three warps in this project, but
+        it produces a noticeably smoother result. That extra cost is worth it here, since any blocky artifacts would
+        otherwise be baked permanently into the final blended mosaic.
+    </p>
+
+    <h3>Rectification</h3>
+    <p>
+        To verify <code>computeH</code> and <code>warpImageBilinear</code> independently of the mosaicing pipeline,
+        two separate photos containing known rectangular objects were rectified. In each case, the four corners of
+        the object were clicked and mapped to an actual rectangle; warping the whole image with the resulting \(H\)
+        makes that object's frame perfectly rectangular. For each example, a small region at the center of the
+        rectangle was also cropped and zoomed in 6x to directly compare nearest-neighbor and bilinear interpolation
+        on the same pixels.
+    </p>
+
+    <h4>Example 1: Starbucks board</h4>
+    <figure>
+    <img alt="rectification of a Starbucks menu board: original, full nearest-neighbor warp, full bilinear warp" src="output/board_rectification.png" width="900"/>
+    <figcaption>
+        Left: original with clicked corners. Middle: full rectified warp using nearest-neighbor interpolation.
+        Right: full rectified warp using bilinear interpolation. The board's frame is now axis-aligned and the
+        background wallpaper stripes are straight, confirming the warp is correct. The black wedge on the right
+        edge is canvas outside the original photo's content, pulled in by the correction.
+    </figcaption>
+    </figure>
+
+    <figure>
+    <img alt="zoomed nearest-neighbor vs bilinear comparison on the Starbucks board text" src="output/board_rectification_zoom.png" width="700"/>
+    <figcaption>
+        A 6x zoom on matching text ("...MS FRAPP..."), comparing nearest-neighbor (left) against bilinear (right).
+        Nearest-neighbor shows visibly blockier, stair-stepped letter edges, while bilinear smooths the same strokes.
+    </figcaption>
+    </figure>
+
+    <h4>Example 2: Lecture slide (ground-plane style rectification)</h4>
+    <figure>
+    <img alt="rectification of a projected lecture slide: original, full nearest-neighbor warp, full bilinear warp" src="output/slide_rectification.png" width="900"/>
+    <figcaption>
+        Left: original with clicked corners, shot at an angle to the projector screen. Middle: full rectified warp
+        using nearest-neighbor interpolation. 
+        Right: full rectified warp using bilinear interpolation. Lines of text are now horizontal and evenly spaced, 
+        and the screen's bezel is axis-aligned, matching the slide content's own correction.
+    </figcaption>
+    </figure>
+
+    <figure>
+    <img alt="zoomed nearest-neighbor vs bilinear comparison on the lecture slide text" src="output/slide_rectification_zoom.png" width="700"/>
+    <figcaption>
+        A 6x zoom on matching text ("...ance Qui..."), comparing nearest-neighbor (left) against bilinear (right).
+        The letter edges are visibly harder and blockier under nearest-neighbor, and softened under bilinear.
+    </figcaption>
+    </figure>
+    <hr/>
+
+    <h2>A.4: Blend the Images into a Mosaic</h2>
+    <p>
+        Each mosaic warps one image into the other's frame, places both on a shared canvas, and blends them using
+        per-pixel weights from a distance transform on each image's valid mask (large near the center, tapering to
+        zero at the warped boundary, normalized to [0, 1]). 
+        Two blending strategies are compared: simple feathering (direct weighted average) and Laplacian pyramid blending (blending each frequency band separately, 
+        which smooths low-frequency color and exposure differences across the seam more gracefully). 
+        Before the Laplacian blend, each image's valid pixels are extended outward into its invalid region using a nearest-valid-pixel
+        fill, so the pyramid's Gaussian blur does not pull in false black values near the mask boundary.
+    </p>
+
+    <div class="formula-box">
+    <p>Feather: \( I = \dfrac{w_1 I_1 + w_2 I_2}{w_1 + w_2} \)</p>
+    <p>Laplacian: blend each pyramid level \(L_1^{(k)}, L_2^{(k)}\) with its own Gaussian-smoothed weight, then reconstruct</p>
+    </div>
+
+    <h3>Mosaic 1: Waterfall</h3>
+    <p>
+        Weight maps for this pair, confirming a smooth taper to zero at the warped image's true (skewed) boundary
+        rather than a rectangular bounding box edge, which would otherwise cause visible wedge artifacts at the seam.
+    </p>
+    <div class="row">
+    <figure>
+    <img alt="distance-based weight map for the warped waterfall image" src="output/set1_waterfall_weights1.png" width="260"/>
+    <figcaption>Weight for warped image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="distance-based weight map for the reference waterfall image" src="output/set1_waterfall_weights2.png" width="260"/>
+    <figcaption>Weight for reference image 2</figcaption>
+    </figure>
+    </div>
+
+    <figure>
+    <img alt="feather vs Laplacian blend comparison, waterfall" src="output/set1_waterfall_blending_comparison.png" width="900"/>
+    <figcaption>Feather (left) vs. Laplacian (right) blending. Canvas size 1330 x 1613.</figcaption>
+    </figure>
+    
+    <p>
+        This was the most demanding scene: shot at close range with large depth variation between the foreground
+        rocks and the cliff face, which slightly violates the fixed-center-of-projection assumption even with
+        careful camera handling. A first attempt with looser correspondences showed a visible seam and a kink in
+        the waterfall stream. After re-picking correspondences on sharper, more stable rock features, mean error
+        dropped from 1.75px to 0.83px and the seam became much less visible, though a very faint misalignment
+        remains near the join, consistent with residual parallax rather than correspondence noise.
+    </p>
+
+    <h3>Mosaic 2: Mountain Valley</h3>
+    <div class="row">
+    <figure>
+    <img alt="distance-based weight map for the warped mountain valley image" src="output/set2_mountain_weights1.png" width="260"/>
+    <figcaption>Weight for warped image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="distance-based weight map for the reference mountain valley image" src="output/set2_mountain_weights2.png" width="260"/>
+    <figcaption>Weight for reference image 2</figcaption>
+    </figure>
+    </div>
+
+    <figure>
+    <img alt="feather vs Laplacian blend comparison, mountain valley" src="output/set2_mountain_blending_comparison.png" width="900"/>
+    <figcaption>Feather (left) vs. Laplacian (right) blending. Canvas size 925 x 1783.</figcaption>
+    </figure>
+
+    <p>
+        Shot at a distance with minimal depth variation, so geometric alignment is excellent. Rock edges and the
+        treeline match cleanly across the seam. A faint vertical seam remains visible in the smooth sky region due
+        to a small exposure or color difference between the two shots. Laplacian blending visibly softens this
+        seam more than feathering alone, since it blends low-frequency color differences over a wider spatial
+        extent rather than a single sharp transition.
+    </p>
+
+    <h3>Mosaic 3: Lighthouse</h3>
+    <div class="row">
+    <figure>
+    <img alt="distance-based weight map for the warped lighthouse image" src="output/set3_lighthouse_weights1.png" width="260"/>
+    <figcaption>Weight for warped image 1</figcaption>
+    </figure>
+    <figure>
+    <img alt="distance-based weight map for the reference lighthouse image" src="output/set3_lighthouse_weights2.png" width="260"/>
+    <figcaption>Weight for reference image 2</figcaption>
+    </figure>
+    </div>
+
+    <figure>
+    <img alt="feather vs Laplacian blend comparison, lighthouse" src="output/set3_lighthouse_blending_comparison.png" width="900"/>
+    <figcaption>Feather (left) vs. Laplacian (right) blending. Canvas size 1497 x 1514.</figcaption>
+    </figure>
+
+    <p>
+        The cleanest result of the three: sharp, high-contrast landmarks (the lighthouse tower, fences, buildings)
+        gave very precise correspondences (0.82px mean error), and the distant, static scene has essentially no
+        parallax. The lighthouse, cliff edge, and horizon align seamlessly with no visible ghosting.
+    </p>
+    <hr/>
+
+    <a href="../index.html">Back</a>
+</body>
+</html>
