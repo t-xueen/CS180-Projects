@@ -82,10 +82,10 @@
 </head>
 
 <body>
-    <h1>CS180 Project #4A: Image Warping and Mosaicing</h1>
+    <h1>CS180 Project 4: Image Warping and Autostitching</h1>
     <hr/>
 
-    <h2>Overview</h2>
+    <h2>Part A: Image Warping and Mosaicing</h2>
     <p>
         This project builds an image mosaicing pipeline from scratch: recovering homographies between pairs of images,
         warping images via inverse sampling with nearest-neighbor and bilinear interpolation, and blending warped
@@ -93,7 +93,6 @@
         with a fixed center of projection, and two single-image rectification examples verify the homography and
         warping code independently of the mosaicing pipeline.
     </p>
-    <hr/>
 
     <h2>A.1: Shoot the Pictures</h2>
     <p>
@@ -407,6 +406,246 @@
         Sharp, high-contrast landmarks such as the lighthouse tower, fences, and buildings made it easier to select precise correspondences. 
         The relatively distant scene also reduces the likelihood of significant parallax. 
         The result shows good alignment of the lighthouse, cliff edge, and horizon, with no obvious ghosting.
+    </p>
+    <hr/>
+
+    <h2>Part B: Feature Matching for Autostitching</h2>
+    <p>
+        Part A estimated homographies from manually clicked point pairs. 
+        In Part B, the correspondences are found automatically, stitching the same scenes without manually picking matching landmarks.
+        Each image pair goes through corner detection, feature description, descriptor matching, RANSAC, and the existing Part A warping and blending pipeline.
+    </p>
+
+    <h2>B.1: Harris Corner Detection and ANMS</h2>
+    <p>
+        Each photo is converted to grayscale, and its Harris corner-response map is computed using <code>corner_harris</code> with <code>sigma=1</code>.
+        Local maxima give candidate corners, and corners within 20 pixels of the image boundary are discarded so that a full descriptor patch can be extracted.
+        This produces more than 22000 candidate corners per image. 
+        Using every candidate would be expensive, and many would cluster around the same textured area.
+    </p>
+
+    <p>
+        Adaptive Non-Maximal Suppression (ANMS) keeps corners that are strong relative to their surroundings while spreading them across the image.
+        For each corner, the distance to its nearest sufficiently stronger corner is calculated using a factor of 0.9. 
+        The 500 corners with the largest suppression radii are retained to balance spatial coverage and computational cost, providing enough features for matching without processing all detected candidates.
+        Compared with the raw Harris detections, the selected points are much more evenly distributed across the scene.
+    </p>
+
+    <div class="formula-box">
+        <p>
+            ANMS radius: \(r_i = \min_{j:\,f_i < 0.9 f_j}\|p_i-p_j\|_2\)
+        </p>
+        <p>Keep the 500 points with the largest \(r_i\), if no sufficiently stronger point exists, \(r_i=\infty\).</p>
+    </div>
+
+    <h3>Waterfall</h3>
+    <div class="row">
+        <figure>
+            <img alt="Waterfall image with raw Harris corner detections" src="partB/set1_1_harris_raw.png" width="420"/>
+            <figcaption>Waterfall image 1: 22494 raw Harris corners.</figcaption>
+        </figure>
+        <figure>
+            <img alt="Waterfall image with ANMS selected corner detections" src="partB/set1_1_harris_anms.png" width="420"/>
+            <figcaption>Same image after ANMS: 500 spatially distributed corners.</figcaption>
+        </figure>
+    </div>
+
+    <h3>Mountain valley</h3>
+    <div class="row">
+        <figure>
+            <img alt="Mountain valley image with raw Harris corner detections" src="partB/set2_1_harris_raw.png" width="420"/>
+            <figcaption>Mountain valley image 1: 23708 raw Harris corners.</figcaption>
+        </figure>
+        <figure>
+            <img alt="Mountain valley image with ANMS selected corners" src="partB/set2_1_harris_anms.png" width="420"/>
+            <figcaption>Same image after ANMS: 500 spatially distributed corners.</figcaption>
+        </figure>
+    </div>
+
+    <h3>Lighthouse</h3>
+    <div class="row">
+        <figure>
+            <img alt="Lighthouse image with raw Harris corner detections" src="partB/set3_1_harris_raw.png" width="420"/>
+            <figcaption>Lighthouse image 1: 24273 raw Harris corners.</figcaption>
+        </figure>
+        <figure>
+            <img alt="Lighthouse image with ANMS selected corners" src="partB/set3_1_harris_anms.png" width="420"/>
+            <figcaption>Same image after ANMS: 500 spatially distributed corners.</figcaption>
+        </figure>
+    </div>
+    <p>
+        The same process was applied to all six input images. 
+        The raw corner counts ranged from 22251 to 24273, and ANMS retained 500 points in each image.
+    </p>
+
+    <h2>B.2: Feature Descriptor Extraction</h2>
+    <p>
+        Around each selected corner, a 40 x 40 grayscale patch is extracted and reduced to an 8 x 8 patch using anti-aliased resizing. 
+        The larger sampling window makes each descriptor represent broader image structure rather than just a few nearby pixels. 
+        The 8 x 8 values are normalized by subtracting their mean and dividing by their standard deviation, then flattened into a 64-dimensional vector.
+        Nearly constant patches are skipped to avoid dividing by zero. No rotation or scale invariance is used.
+    </p>
+
+    <div class="formula-box">
+        <p>Normalized descriptor: \(D = \dfrac{P - \mu_P}{\sigma_P}\)</p>
+        <p>\(40\times40\text{ patch}\;\rightarrow\;8\times8\text{ patch}\;\rightarrow\;64\text{-element vector}\)</p>
+    </div>
+
+    <p>
+        All six images produced 500 valid descriptors, each with shape <code>(500, 64)</code>. 
+        The images below show eight normalized descriptor patches from one image in each scene.
+    </p>
+
+    <div class="row">
+        <figure>
+            <img alt="Eight normalized waterfall feature descriptors" src="partB/set1_1_descriptors.png" width="310"/>
+            <figcaption>Waterfall descriptors</figcaption>
+        </figure>
+        <figure>
+            <img alt="Eight normalized mountain feature descriptors" src="partB/set2_1_descriptors.png" width="310"/>
+            <figcaption>Mountain valley descriptors</figcaption>
+        </figure>
+        <figure>
+            <img alt="Eight normalized lighthouse feature descriptors" src="partB/set3_1_descriptors.png" width="310"/>
+            <figcaption>Lighthouse descriptors</figcaption>
+        </figure>
+    </div>
+
+    <h2>B.3: Feature Matching</h2>
+    <p>
+        To match features between two images, the Euclidean (L2) distances between their descriptors are computed. 
+        For each descriptor in image 1, the closest and second-closest matches in image 2 are identified. 
+        Lowe's ratio test is then applied with a threshold of <code>0.7</code>, 
+        keeping only matches where the closest descriptor is significantly more similar than the second-closest. 
+        This helps reject ambiguous matches before RANSAC.
+        The red lines below show matches before RANSAC filtering.
+    </p>
+
+    <div class="formula-box">
+        <p>Lowe's ratio test: \(\dfrac{d_{\mathrm{nearest}}}{d_{\mathrm{second\ nearest}}} < 0.7\)</p>
+    </div>
+
+    <h3>Waterfall: 63 matches</h3>
+    <figure>
+        <img alt="63 matched features between the waterfall images" src="partB/set1_1_set1_2_matches.png" width="900"/>
+        <figcaption>63 descriptor matches passed the ratio test.</figcaption>
+    </figure>
+
+    <h3>Mountain valley: 148 matches</h3>
+    <figure>
+        <img alt="148 matched features between the mountain valley images" src="partB/set2_1_set2_2_matches.png" width="900"/>
+        <figcaption>148 descriptor matches, including some correspondences that RANSAC later rejects.</figcaption>
+    </figure>
+
+    <h3>Lighthouse: 35 matches</h3>
+    <figure>
+        <img alt="35 matched features between the lighthouse images" src="partB/set3_1_set3_2_matches.png" width="900"/>
+        <figcaption>35 descriptor matches passed the ratio test.</figcaption>
+    </figure>
+
+    <h2>B.4: RANSAC and Automatic Mosaics</h2>
+    <p>
+        Some descriptor matches are incorrect even after the ratio test.
+        A 4-point RANSAC algorithm was implemented to estimate homographies robustly.
+        In each of 2000 iterations, four matches are randomly sampled, a candidate homography is computed using <code>computeH</code>, 
+        and the reprojection error of each match is measured.
+        Matches below a 3-pixel threshold are counted as inliers.
+        The candidate with the most inliers is selected, and the final homography is recomputed using all selected inliers through least squares.
+    </p>
+
+    <div class="formula-box">
+        <p>Reprojection error: \(e_i = \|\operatorname{apply\_H}(H,p_i)-p_i'\|_2\)</p>
+        <p>RANSAC inlier at selection: \(e_i < 3\text{ pixels}\)</p>
+    </div>
+
+    <table>
+        <tr>
+            <th>Scene</th><th>Matches</th><th>Inliers</th><th>Outliers</th><th>Mean inlier error</th><th>Max inlier error</th>
+        </tr>
+        <tr><td>Waterfall</td><td>63</td><td>63 (100%)</td><td>0</td><td>1.231px</td><td>2.275px</td></tr>
+        <tr><td>Mountain valley</td><td>148</td><td>118 (79.7%)</td><td>30</td><td>1.412px</td><td>3.422px</td></tr>
+        <tr><td>Lighthouse</td><td>35</td><td>31 (88.6%)</td><td>4</td><td>1.020px</td><td>2.477px</td></tr>
+    </table>
+
+    <p>
+        Errors in this table are measured over the selected RANSAC inliers after fitting the final homography.
+        The mountain valley's maximum of 3.422px is slightly above the 3-pixel selection threshold because
+        the final least-squares refit changes the estimated homography. 
+        The manual and automatic error statistics are measured on different correspondences, 
+        so their values should not be compared as if they used the same test points.
+    </p>
+    <p>
+        I reuse Part A's <code>run_full_mosaic</code> function, changing only where the homography comes from:
+        Part A uses clicked correspondences, while Part B uses automatic feature matches and RANSAC. 
+        Both pipelines use the same bilinear warping, feather blending, and two-level Laplacian blending. 
+        For each image, I show the RANSAC inlier/outlier plot, followed by a side-by-side comparison of the manually and automatically stitched mosaics using Laplacian blending.
+    </p>
+
+    <h3>Automatic Mosaic 1: Waterfall</h3>
+    <figure>
+        <img alt="Waterfall matches with 63 RANSAC inliers in green and no outliers"
+             src="partB/set1_1_set1_2_ransac_matches.png" width="900"/>
+        <figcaption>RANSAC, waterfall: 63 inliers (green), 0 rejected matches.</figcaption>
+    </figure>
+
+    <div class="row">
+        <figure>
+            <img alt="Manually aligned waterfall mosaic from Part A" src="output/set1_waterfall_laplacian.png" width="430"/>
+            <figcaption>Manual homography (Part A)</figcaption>
+        </figure>
+        <figure>
+            <img alt="Automatically aligned waterfall mosaic from Part B" src="partB/set1_waterfall_auto_laplacian.png" width="430"/>
+            <figcaption>Automatic homography (Part B)</figcaption>
+        </figure>
+    </div>
+
+    <p>
+        All 63 accepted descriptor matches were also RANSAC inliers. 
+        The automatically aligned waterfall resembles the manual mosaic, despite using no clicked correspondences. 
+        Both mosaics look similar overall, but the automatic result shows better alignment around the trees at the top, making that area look more natural than in the manual result.
+    </p>
+
+    <h3>Automatic Mosaic 2: Mountain Valley</h3>
+    <figure>
+        <img alt="Mountain valley matches with 118 RANSAC inliers in green and 30 outliers in red"
+             src="partB/set2_1_set2_2_ransac_matches.png" width="900"/>
+        <figcaption>RANSAC, mountain valley: 118 inliers (green) and 30 rejected matches (red).</figcaption>
+    </figure>
+    <div class="row">
+        <figure>
+            <img alt="Manually aligned mountain valley mosaic from Part A" src="output/set2_mountain_laplacian.png" width="430"/>
+            <figcaption>Manual homography (Part A)</figcaption>
+        </figure>
+        <figure>
+            <img alt="Automatically aligned mountain valley mosaic from Part B" src="partB/set2_mountain_auto_laplacian.png" width="430"/>
+            <figcaption>Automatic homography (Part B)</figcaption>
+        </figure>
+    </div>
+    <p>
+        This pair produced the most initial descriptor matches (148). RANSAC rejected 30 matches and retained
+        118 for the final homography. The automatically stitched mountain and valley features appear to align well.
+    </p>
+
+    <h3>Automatic Mosaic 3: Lighthouse</h3>
+    <figure>
+        <img alt="Lighthouse matches with 31 RANSAC inliers in green and 4 outliers in red"
+             src="partB/set3_1_set3_2_ransac_matches.png" width="900"/>
+        <figcaption>RANSAC, lighthouse: 31 inliers (green) and 4 rejected matches (red).</figcaption>
+    </figure>
+    
+    <div class="row">
+        <figure>
+            <img alt="Manually aligned lighthouse mosaic from Part A" src="output/set3_lighthouse_laplacian.png" width="430"/>
+            <figcaption>Manual homography (Part A)</figcaption>
+        </figure>
+        <figure>
+            <img alt="Automatically aligned lighthouse mosaic from Part B" src="partB/set3_lighthouse_auto_laplacian.png" width="430"/>
+            <figcaption>Automatic homography (Part B)</figcaption>
+        </figure>
+    </div>
+    <p>
+        Although this pair had the fewest descriptor matches (35), RANSAC kept 31 and recovered a usable homography. 
+        The lighthouse, nearby structures, and coastline align in the automatic panorama, similar to the manual result.
     </p>
     <hr/>
 
